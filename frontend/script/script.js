@@ -1,5 +1,4 @@
 // GitHub OAuth Configuration
-const DEFAULT_API_BASE_URL = "https://codetracker-production-979d.up.railway.app/api";
 
 function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -10,7 +9,7 @@ function readApiBaseUrl() {
   const fromWindow = window.__CODETRACKER_API_BASE_URL || window.__API_BASE_URL;
   const fromMeta = document.querySelector('meta[name="api-base-url"]')?.getAttribute("content");
 
-  return normalizeBaseUrl(fromClient || fromWindow || fromMeta || DEFAULT_API_BASE_URL);
+  return normalizeBaseUrl(fromClient || fromWindow || fromMeta || window.CodeTrackerConfig?.apiBaseUrl);
 }
 
 const BACKEND_URL = `${readApiBaseUrl()}/oauth`;
@@ -78,22 +77,6 @@ async function handleOAuthCallbackRedirect() {
   return false;
 }
 
-function getDeviceIdForAutoRedirect() {
-  if (window.ApiClient?._getCookie) {
-    const cookieDeviceId = window.ApiClient._getCookie("device_id");
-    if (cookieDeviceId && cookieDeviceId.trim()) {
-      return cookieDeviceId.trim();
-    }
-  }
-
-  const storageDeviceId = localStorage.getItem("device_id") || sessionStorage.getItem("device_id");
-  if (storageDeviceId && storageDeviceId.trim()) {
-    return storageDeviceId.trim();
-  }
-
-  return null;
-}
-
 // Check if user is already authenticated on page load.
 document.addEventListener("DOMContentLoaded", async () => {
   if (await handleOAuthCallbackRedirect()) {
@@ -102,16 +85,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (!window.ApiClient) return;
 
-  const deviceId = getDeviceIdForAutoRedirect();
-  if (!deviceId) return;
-
   try {
-    const refreshed = await window.ApiClient.refreshToken(deviceId);
-    if (refreshed) {
-      await redirectAuthenticatedSession();
-      return;
-    }
-
+    // Backend cookies cannot be read from a frontend on another origin.
+    // Let the backend check and refresh them through credentialed requests.
     await redirectAuthenticatedSession();
   } catch (error) {
     console.warn("Auto-redirect check failed:", error);

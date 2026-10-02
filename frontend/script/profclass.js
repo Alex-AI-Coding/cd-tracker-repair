@@ -2817,456 +2817,64 @@ function getInputValue(id) {
   const element = document.getElementById(id);
   return element ? element.value : "";
 }
-/**
- * Navigate to Syntax Analyzer page with repository data and classroom context
- * @param {string} repoUrl - GitHub repository URL
- * @param {string} activityTitle - Activity title
- * @param {string} studentName - Student name
- */
-
-function navigateToSyntaxAnalyzer(repoUrl, activityTitle, studentName) {
-
-  // Get the current classroom ID from state
-  const classroomId = state.classroomId;
-
-  if (!classroomId) {
-    showNotification("Classroom ID not found. Unable to analyze.", "error");
-    return;
-  }
-
-  if (!repoUrl) {
-    showNotification("No repository URL available for analysis.", "error");
-    return;
-  }
-
-  // Store the complete data for the syntax page to use
-  const analysisData = {
-    repoUrl: repoUrl,
-    activityTitle: activityTitle || "Activity",
-    studentName: studentName || "Student",
-    classroomId: classroomId,
-    timestamp: new Date().toISOString(),
-    source: "professor_dashboard",
-    returnUrl: window.location.href, // Store current URL for return
-  };
-
-  // Save to localStorage
-  localStorage.setItem("pendingAnalysis", JSON.stringify(analysisData));
-
-  // Also store in sessionStorage as backup
-  sessionStorage.setItem("pendingAnalysis", JSON.stringify(analysisData));
-
-  // Store just the classroom ID separately for quick access
-  localStorage.setItem("currentClassroomId", classroomId);
-
-  // Show notification
-  showNotification(`Opening analyzer for: ${studentName}`, "info");
-
-  // Navigate to syntax.html with classroom ID as query parameter
-  window.location.href = `/Syntax.html?classroomId=${encodeURIComponent(classroomId)}&student=${encodeURIComponent(studentName)}&activity=${encodeURIComponent(activityTitle)}`;
-}
-/**
- * Validate if repository contains supported files before navigating to analyzer
- * @param {string} repoUrl - GitHub repository URL
- * @param {string} activityTitle - Activity title
- * @param {string} studentName - Student name
- */
-
-async function validateAndNavigateToAnalyzer(
-  repoUrl,
-  activityTitle,
-  studentName,
-  context = {},
-) {
+/** Open a repository review from an eligible grading submission. */
+async function validateAndNavigateToAnalyzer(repoUrl, activityTitle, studentName, context = {}) {
   const submissionStatus = asString(context?.submissionStatus).toUpperCase();
-  const fromGradingProcess = Boolean(context?.fromGradingProcess);
-
-  if (!fromGradingProcess) {
-    showNotification(
-      "Analyzer can only be opened from the grading process.",
-      "warning",
-    );
+  if (!context?.fromGradingProcess) {
+    showNotification("Analyzer can only be opened from the grading process.", "warning");
     return false;
   }
-
   if (submissionStatus === "GRADED") {
-    showNotification(
-      "Analyzer is locked because this submission is already graded.",
-      "warning",
-    );
+    showNotification("Analyzer is locked because this submission is already graded.", "warning");
     return false;
   }
-
   if (submissionStatus && submissionStatus !== "SUBMITTED") {
-    showNotification(
-      "Analyzer is only available for submissions awaiting grading.",
-      "warning",
-    );
+    showNotification("Analyzer is only available for submissions awaiting grading.", "warning");
     return false;
   }
-
-  if (!repoUrl) {
-    showNotification("No repository URL available for analysis.", "error");
+  if (!state.classroomId) {
+    showNotification("Classroom ID not found. Please reopen the class.", "error");
     return false;
   }
-
-  // Show loading notification
-  showNotification("Checking repository language...", "info");
-
+  if (!window.CodeTrackerConfig?.analyzerBaseUrl) {
+    showNotification("The code analyzer is currently unavailable. Please try again later.", "error");
+    return false;
+  }
   try {
-    // Extract owner and repo name from GitHub URL
-    const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
-    if (!match) {
-      showNotification("Invalid GitHub repository URL.", "error");
-      return false;
-    }
-
-    const owner = match[1];
-    const repo = match[2].replace(/\.git$/, "");
-
-    // Use GitHub API to get repository languages
-    const response = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/languages`,
-    );
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        showNotification(
-          "Repository not found. Please check the URL.",
-          "error",
-        );
-      } else if (response.status === 403) {
-        showNotification(
-          "GitHub API rate limit exceeded. Please try again later.",
-          "error",
-        );
-      } else {
-        showNotification("Unable to check repository languages.", "error");
-      }
-      return false;
-    }
-
-    const languages = await response.json();
-
-    // Define the supported language keywords and file extensions
-    const supportedLanguages = ["Python", "Java", "C++", "C"];
-    const supportedExtensions = [
-      ".py",
-      ".c",
-      ".cpp",
-      ".cc",
-      ".cxx",
-      ".h",
-      ".hpp",
-      ".java",
-    ];
-
-    // Check if any supported language is present
-    let hasSupportedLanguage = false;
-    let detectedLanguages = [];
-
-    for (const [lang, bytes] of Object.entries(languages)) {
-      detectedLanguages.push(lang);
-      if (supportedLanguages.includes(lang)) {
-        hasSupportedLanguage = true;
-        break;
-      }
-    }
-
-    // If no supported language is detected by name, scan the full repository tree recursively
-    if (!hasSupportedLanguage) {
-      showNotification("Checking repository files recursively...", "info");
-
-      // Get repository contents so nested folders are included in the scan
-      const contentsResponse = await fetch(
-        `https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`,
-      );
-
-      if (contentsResponse.ok) {
-        const contents = await contentsResponse.json();
-        const hasSupportedFiles = contents.tree?.some((item) => {
-          const fileName = item.path.toLowerCase();
-          return supportedExtensions.some((ext) => fileName.endsWith(ext));
-        });
-
-        if (hasSupportedFiles) {
-          hasSupportedLanguage = true;
-        }
-      }
-    }
-
-    if (!hasSupportedLanguage) {
-      // Show detailed warning modal
-      showNoSupportedCodeWarning(repoUrl, activityTitle, studentName, detectedLanguages);
-      return false;
-    }
-
-    // If a supported language is found, proceed to analyzer
-    proceedToAnalyzer(repoUrl, activityTitle, studentName);
+    const repository = window.CodeTrackerAnalyzer.normalizeRepositoryUrl(repoUrl);
+    proceedToAnalyzer(repository, activityTitle, studentName);
     return true;
   } catch (error) {
-    console.error("Language validation error:", error);
-    showNotification(
-      "Failed to validate repository. Please try again.",
-      "error",
-    );
+    showNotification(error.message || "Invalid GitHub repository URL.", "error");
     return false;
   }
 }
 
-/**
- * Show warning modal when no supported files are found
- */
-function showNoSupportedCodeWarning(
-  repoUrl,
-  activityTitle,
-  studentName,
-  detectedLanguages,
-) {
-  // Create modal if it doesn't exist
-  let modal = document.getElementById("noCppWarningModal");
-
-  if (!modal) {
-    modal = document.createElement("div");
-    modal.id = "noCppWarningModal";
-    modal.className = "modal";
-    modal.innerHTML = `
-            <div class="modal-content warning-modal">
-                <div class="modal-header">
-                    <i class="fas fa-exclamation-triangle" style="color: var(--accent-yellow);"></i>
-                    <h3>No Supported Code Detected</h3>
-                </div>
-                <div class="modal-body">
-                    <div class="warning-icon-large">
-                        <i class="fab fa-cuttlefish"></i>
-                        <i class="fas fa-plus"></i>
-                        <i class="fas fa-plus"></i>
-                    </div>
-                    <p class="warning-message">
-                        <strong>This repository does not appear to contain supported source code.</strong>
-                    </p>
-                    <div class="repo-info-box">
-                        <p><i class="fab fa-github"></i> <strong>Repository:</strong></p>
-                        <code class="repo-url-display">${escapeHtml(repoUrl)}</code>
-                        <p><strong>Student:</strong> ${escapeHtml(studentName)}</p>
-                        <p><strong>Activity:</strong> ${escapeHtml(activityTitle)}</p>
-                    </div>
-                    ${
-                      detectedLanguages.length > 0
-                        ? `
-                        <div class="detected-languages">
-                            <p><i class="fas fa-code"></i> <strong>Detected Languages:</strong></p>
-                            <div class="language-tags">
-                                ${detectedLanguages.map((lang) => `<span class="lang-tag">${escapeHtml(lang)}</span>`).join("")}
-                            </div>
-                        </div>
-                    `
-                        : ""
-                    }
-                    <div class="warning-suggestions">
-                        <p><i class="fas fa-lightbulb"></i> <strong>Possible reasons:</strong></p>
-                        <ul>
-                            <li>The student submitted a repository without supported source files</li>
-                            <li>The repository might be empty or contain only other languages</li>
-                            <li>The repository URL might be incorrect</li>
-                            <li>The student may have submitted the wrong repository</li>
-                        </ul>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" id="closeSupportedWarningBtn">
-                        <i class="fas fa-times"></i> Close
-                    </button>
-                </div>
-            </div>
-        `;
-    document.body.appendChild(modal);
-
-    // Add modal styles if not present
-    if (!document.getElementById("warningModalStyles")) {
-      const styles = document.createElement("style");
-      styles.id = "warningModalStyles";
-      styles.textContent = `
-                .warning-modal {
-                    max-width: 440px;
-                    width: 86%;
-                    background: var(--bg-card);
-                    border-radius: 16px;
-                    border: 1px solid var(--border);
-                    overflow: hidden;
-                    opacity: 1;
-                    backdrop-filter: none;
-                    -webkit-backdrop-filter: none;
-                    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
-                }
-                .modal-header {
-                    padding: 20px;
-                    background: #171b22;
-                    border-bottom: 1px solid var(--border);
-                    display: flex;
-                    align-items: center;
-                    gap: 12px;
-                    backdrop-filter: none;
-                    -webkit-backdrop-filter: none;
-                }
-                .modal-header h3 {
-                    margin: 0;
-                    color: var(--accent-yellow);
-                }
-                .modal-body {
-                    padding: 20px;
-                    background: var(--bg-card);
-                    backdrop-filter: none;
-                    -webkit-backdrop-filter: none;
-                }
-                .warning-icon-large {
-                    text-align: center;
-                    font-size: 42px;
-                    margin-bottom: 16px;
-                    color: var(--accent-yellow);
-                }
-                .warning-icon-large i {
-                    margin: 0 5px;
-                }
-                .warning-message {
-                    text-align: center;
-                    margin-bottom: 16px;
-                    font-size: 1rem;
-                }
-                .repo-info-box {
-                    background: #12161d;
-                    padding: 14px;
-                    border-radius: 8px;
-                    margin: 14px 0;
-                    border: 1px solid var(--border);
-                    backdrop-filter: none;
-                    -webkit-backdrop-filter: none;
-                }
-                .repo-info-box p {
-                    margin: 8px 0;
-                }
-                .repo-info-box code {
-                    display: block;
-                    word-break: break-all;
-                    margin: 8px 0;
-                    font-size: 0.85rem;
-                    color: var(--accent-blue);
-                }
-                .detected-languages {
-                    margin: 14px 0;
-                }
-                .language-tags {
-                    display: flex;
-                    flex-wrap: wrap;
-                    gap: 8px;
-                    margin-top: 8px;
-                }
-                .lang-tag {
-                    background: #1b2a3d;
-                    padding: 4px 12px;
-                    border-radius: 20px;
-                    font-size: 0.85rem;
-                    color: var(--accent-blue);
-                }
-                .warning-suggestions {
-                    background: #2a1719;
-                    padding: 14px;
-                    border-radius: 8px;
-                    margin-top: 14px;
-                    border-left: 3px solid var(--accent-yellow);
-                    backdrop-filter: none;
-                    -webkit-backdrop-filter: none;
-                }
-                .warning-suggestions ul {
-                    margin: 8px 0 0 20px;
-                    color: var(--text-secondary);
-                }
-                .warning-suggestions li {
-                    margin: 4px 0;
-                }
-                .modal-footer {
-                    padding: 14px 20px;
-                    background: #171b22;
-                    border-top: 1px solid var(--border);
-                    display: flex;
-                    justify-content: flex-end;
-                    gap: 12px;
-                    backdrop-filter: none;
-                    -webkit-backdrop-filter: none;
-                }
-                .btn-primary {
-                    background: var(--accent-blue);
-                    color: white;
-                    border: none;
-                }
-                .btn-primary:hover {
-                    background: #4793e0;
-                }
-                .btn-secondary {
-                    background: var(--bg-input);
-                    border: 1px solid var(--border);
-                    color: var(--text-primary);
-                }
-                .btn-secondary:hover {
-                    background: var(--border);
-                }
-                @media (max-width: 600px) {
-                    .warning-modal {
-                        width: 95%;
-                        margin: 20px;
-                    }
-                    .modal-footer {
-                        flex-direction: column;
-                    }
-                }
-            `;
-      document.head.appendChild(styles);
-    }
-  }
-
-  // Setup event listeners
-  const closeBtn = document.getElementById("closeSupportedWarningBtn");
-
-  // Remove old listeners and add new ones
-  const newCloseBtn = closeBtn.cloneNode(true);
-  closeBtn.parentNode.replaceChild(newCloseBtn, closeBtn);
-
-  newCloseBtn.addEventListener("click", () => {
-    closeModal("noCppWarningModal");
-  });
-
-  // Close modal when clicking outside
-  modal.addEventListener("click", (e) => {
-    if (e.target === modal) {
-      closeModal("noCppWarningModal");
-    }
-  });
-
-  openModal("noCppWarningModal");
-}
-
-/**
- * Proceed to analyzer with the repository data
- */
 function proceedToAnalyzer(repoUrl, activityTitle, studentName) {
   const analysisData = {
-    repoUrl: repoUrl,
+    repoUrl,
     activityTitle: activityTitle || "Activity",
     studentName: studentName || "Student",
     classroomId: state.classroomId,
     timestamp: new Date().toISOString(),
     source: "professor_dashboard",
+    returnUrl: window.location.href
   };
-
-  // Save to localStorage
-  localStorage.setItem("pendingAnalysis", JSON.stringify(analysisData));
-  sessionStorage.setItem("pendingAnalysis", JSON.stringify(analysisData));
-  localStorage.setItem("currentClassroomId", state.classroomId);
-
-  showNotification(`Opening analyzer for: ${studentName}`, "success");
-
-  // Navigate to syntax.html with all parameters
-  window.location.href = `/Syntax.html?classroomId=${encodeURIComponent(state.classroomId)}&student=${encodeURIComponent(studentName)}&activity=${encodeURIComponent(activityTitle)}&repo=${encodeURIComponent(repoUrl)}`;
+  // GitHub's public language API was an unreliable gate (private repositories,
+  // rate limits, and delayed language detection). The analyzer checks files.
+  for (const storageName of ["sessionStorage", "localStorage"]) {
+    try {
+      window[storageName].setItem("pendingAnalysis", JSON.stringify(analysisData));
+      window[storageName].setItem("currentClassroomId", state.classroomId);
+    } catch (_) { /* URL parameters still carry the review if storage is blocked. */ }
+  }
+  const params = new URLSearchParams({
+    classroomId: state.classroomId,
+    student: analysisData.studentName,
+    activity: analysisData.activityTitle,
+    repo: repoUrl
+  });
+  window.location.href = `/Syntax.html?${params}`;
 }
 
 /**

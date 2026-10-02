@@ -575,6 +575,7 @@
    */
   async function loadPreferenceFromAccount() {
     if (
+      window.CodeTrackerConfig?.features?.accountTheme !== true ||
       !isAuthenticatedArea() ||
       !window.ApiClient?.request
     ) {
@@ -627,7 +628,7 @@
       const message =
         String(error?.message || "");
 
-      if (/404|not found|405/i.test(message)) {
+      if ([404, 405].includes(error?.status) || /404|not found|405/i.test(message)) {
         backendPreferenceSupported = false;
       }
     }
@@ -640,6 +641,7 @@
     preference
   ) {
     if (
+      window.CodeTrackerConfig?.features?.accountTheme !== true ||
       !isAuthenticatedArea() ||
       !window.ApiClient?.request ||
       backendPreferenceSupported === false
@@ -677,7 +679,7 @@
           const message =
             String(error?.message || "");
 
-          if (/404|not found|405/i.test(message)) {
+          if ([404, 405].includes(error?.status) || /404|not found|405/i.test(message)) {
             backendPreferenceSupported = false;
           }
         }

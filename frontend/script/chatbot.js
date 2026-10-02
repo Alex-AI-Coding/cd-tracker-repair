@@ -1084,7 +1084,10 @@
       page = 0,
       append = false
     } = {}) {
-      if (!window.ApiClient?.request || isLoadingThreads) {
+      if (
+        window.CodeTrackerConfig?.features?.remoteChatHistory !== true ||
+        !window.ApiClient?.request || isLoadingThreads
+      ) {
         return false;
       }
 
@@ -1312,6 +1315,16 @@
 
       if (reload) {
         history = readHistory();
+      }
+
+      if (remoteHistoryEnabled && activeThreadId && messagesHaveMore) {
+        const older = document.createElement("button");
+        older.type = "button";
+        older.className = "chatbot-messages-more";
+        older.dataset.loadOlderMessages = "true";
+        older.disabled = isLoadingThread;
+        older.textContent = isLoadingThread ? "Loading older messages…" : "Load older messages";
+        elements.messages.appendChild(older);
       }
 
       if (!history.length) {
@@ -2708,18 +2721,3 @@
       publicApi;
   });
 })();
-      if (
-        remoteHistoryEnabled &&
-        activeThreadId &&
-        messagesHaveMore
-      ) {
-        const older = document.createElement("button");
-        older.type = "button";
-        older.className = "chatbot-messages-more";
-        older.dataset.loadOlderMessages = "true";
-        older.disabled = isLoadingThread;
-        older.textContent = isLoadingThread
-          ? "Loading older messages…"
-          : "Load older messages";
-        elements.messages.appendChild(older);
-      }

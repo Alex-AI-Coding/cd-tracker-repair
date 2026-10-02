@@ -1,6 +1,6 @@
 
 (function attachApiClient(globalScope) {
-  const DEFAULT_API_BASE_URL = "https://codetracker-production-979d.up.railway.app/api";
+  "use strict";
 
   function normalizeBaseUrl(value) {
     return String(value || "").trim().replace(/\/+$/, "");
@@ -9,7 +9,10 @@
   function resolveApiBaseUrl() {
     const fromWindow = globalScope.__CODETRACKER_API_BASE_URL || globalScope.__API_BASE_URL;
     const fromMeta = document.querySelector('meta[name="api-base-url"]')?.getAttribute("content");
-    const chosen = fromWindow || fromMeta || DEFAULT_API_BASE_URL;
+    const chosen = fromWindow || fromMeta || globalScope.CodeTrackerConfig?.apiBaseUrl;
+    if (!chosen) {
+      throw new Error("Load runtime-config.js before api-client.js.");
+    }
     return normalizeBaseUrl(chosen);
   }
 
@@ -75,6 +78,7 @@
   let isRefreshing = false;
   let refreshPromise = null;
   let lastRefreshSucceededAt = 0;
+  let refreshFailedUntil = 0;
   const REFRESH_COOLDOWN_MS = 10000;
   let authLockActive = false;
   let authLockPromptShown = false;
@@ -84,12 +88,11 @@
     return String(path || "").startsWith("/auth/");
   }
 
- async function refreshToken() {
-    // REMOVED the deviceId null check that was failing
-
+  async function refreshToken() {
     if (isRefreshing && refreshPromise) {
       return refreshPromise;
     }
+    if (Date.now() < refreshFailedUntil) return false;
 
     isRefreshing = true;
 
@@ -106,14 +109,32 @@
         const body = await parseResponseBody(response);
 
         if (!response.ok) {
+          refreshFailedUntil = Date.now() + REFRESH_COOLDOWN_MS;
           console.error("Token refresh failed:", extractErrorMessage(body, `Refresh failed with status ${response.status}`));
           return false;
         }
 
+        // A 200 refresh response does not prove the browser accepted the JWT
+        // cookie. Verify it on the same API before announcing success.
+        const checkResponse = await fetch(`${API_BASE_URL}/auth/check`, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          headers: { Accept: "application/json" }
+        });
+        const checkBody = await parseResponseBody(checkResponse);
+        if (!checkResponse.ok || checkBody?.authenticated !== true) {
+          refreshFailedUntil = Date.now() + REFRESH_COOLDOWN_MS;
+          console.error("Refresh completed, but the session is still unauthenticated. Check JWT cookie settings, blocked cookies, and deployment consistency.");
+          return false;
+        }
+
+        refreshFailedUntil = 0;
         lastRefreshSucceededAt = Date.now();
         console.log("JWT token refreshed successfully");
         return true;
       } catch (error) {
+        refreshFailedUntil = Date.now() + REFRESH_COOLDOWN_MS;
         console.error("Refresh token error:", error);
         return false;
       } finally {
@@ -176,7 +197,11 @@
         throw new Error("Authentication required");
       }
 
-      throw new Error(extractErrorMessage(body, `Server error: ${response.status}`));
+      const error = new Error(extractErrorMessage(body, `Server error: ${response.status}`));
+      error.status = response.status;
+      error.body = body;
+      error.path = path;
+      throw error;
     }
 
     return body;
@@ -239,6 +264,7 @@
       const response = await fetch(`${API_BASE_URL}/auth/check`, {
         method: "GET",
         credentials: "include",
+        cache: "no-store",
         headers: {
           Accept: "application/json"
         }
@@ -705,7 +731,7 @@
     checkAndRedirectIfAuthenticated,
     logout,
     getDeviceId,
-    refreshToken, 
+    refreshToken,
     checkSessionState,
     _getCookie: getCookie
   };
